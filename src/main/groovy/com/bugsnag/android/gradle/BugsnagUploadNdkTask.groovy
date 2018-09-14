@@ -1,17 +1,29 @@
 package com.bugsnag.android.gradle
 
+import com.android.SdkConstants
+import com.android.annotations.NonNull
+import com.android.annotations.Nullable
 import com.android.build.gradle.api.BaseVariantOutput
+import com.android.build.gradle.internal.SdkHandler
 import com.android.build.gradle.internal.core.Abi
+import com.android.build.gradle.internal.core.Toolchain
+import com.android.build.gradle.internal.ndk.DefaultNdkInfo
 import com.android.build.gradle.internal.ndk.NdkHandler
 import com.android.build.gradle.tasks.ExternalNativeBuildTask
 import com.android.build.gradle.tasks.ProcessAndroidResources
+import com.android.utils.Pair
+import com.google.common.base.Charsets
 import org.apache.http.entity.mime.MultipartEntity
 import org.apache.http.entity.mime.content.FileBody
 import org.apache.http.entity.mime.content.StringBody
 import org.gradle.api.tasks.TaskAction
 
+import java.lang.reflect.Constructor
+import java.lang.reflect.Method
+import java.lang.reflect.Parameter
 import java.util.zip.GZIPOutputStream
 
+import static com.android.SdkConstants.FN_LOCAL_PROPERTIES
 import static groovy.io.FileType.FILES
 
 /**
@@ -208,13 +220,95 @@ class BugsnagUploadNdkTask extends BugsnagMultiPartUploadTask {
 
         try {
             Abi abi = Abi.getByName(arch)
-            NdkHandler handler = new NdkHandler(rootDir, null, toolchain, "", true)
-            File objDumpPath = new File(handler.getDefaultGccToolchainPath(abi), "bin/" + abi.getGccExecutablePrefix() + "-objdump")
+            File objDumpPath = new File(getToolChainPath(abi), "bin/" + abi.getGccExecutablePrefix() + "-objdump")
             return objDumpPath
         } catch (Throwable ex) {
             project.logger.error("Error attempting to calculate objdump location: " + ex.message)
         }
 
         return null
+    }
+
+    /**
+     * Get the path for the default GCC toolchain
+     * TODO: fix this for different toolchains
+     */
+    private String getToolChainPath(Abi abi) {
+        File ndkDirectory = findNdkDirectory(readProjectProperties(), projectDir)
+        DefaultNdkInfo ndkInfo = new DefaultNdkInfo(ndkDirectory);
+        return ndkInfo.getToolchainPath(Toolchain.GCC, ndkInfo.getDefaultToolchainVersion(Toolchain.GCC, abi), abi);
+    }
+
+    /**
+     * Determine the location of the NDK directory.
+     *
+     * The NDK directory can be set in the local.properties file, using the ANDROID_NDK_HOME
+     * environment variable or come bundled with the SDK.
+     *
+     * Return null if NDK directory is not found.
+     */
+    private static File findNdkDirectory(Properties properties, File projectDir) {
+        String ndkDirProp = properties.getProperty("ndk.dir");
+        if (ndkDirProp != null) {
+            return new File(ndkDirProp);
+        }
+
+        String ndkEnvVar = System.getenv("ANDROID_NDK_HOME");
+        if (ndkEnvVar != null) {
+            return new File(ndkEnvVar);
+        }
+
+        Pair<File, Boolean> sdkLocation = SdkHandler.findSdkLocation(properties, projectDir);
+        File sdkFolder = sdkLocation.getFirst();
+        if (sdkFolder != null) {
+            // Worth checking if the NDK came bundled with the SDK
+            File ndkBundle = new File(sdkFolder, SdkConstants.FD_NDK);
+            if (ndkBundle.isDirectory()) {
+                return ndkBundle;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Read the project properties file
+     */
+    private Properties readProjectProperties() {
+        File localProperties = new File(projectDir, FN_LOCAL_PROPERTIES);
+        Properties properties = new Properties();
+        if (localProperties.isFile()) {
+            properties = readProperties(localProperties);
+        }
+
+        return properties;
+    }
+
+    /**
+     * Read the given properties file
+     */
+    private static Properties readProperties(File file) {
+        Properties properties = new Properties();
+        FileInputStream fis = null;
+        InputStreamReader reader = null;
+        try {
+            fis = new FileInputStream(file);
+            reader = new InputStreamReader(fis, Charsets.UTF_8)
+
+            properties.load(reader);
+        } catch (FileNotFoundException ignored) {
+            // ignore since we check up front and we don't want to fail on it anyway
+            // in case there's an env var.
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to read " + file, e);
+        } finally {
+            if (fis != null) {
+                fis.close();
+            }
+            if (reader != null) {
+                reader.close()
+            }
+        }
+        return properties;
     }
 }
