@@ -220,7 +220,8 @@ class BugsnagUploadNdkTask extends BugsnagMultiPartUploadTask {
 
         try {
             Abi abi = Abi.getByName(arch)
-            File objDumpPath = new File(getToolChainPath(abi), "bin/" + abi.getGccExecutablePrefix() + "-objdump")
+            Toolchain toolchain = Toolchain.getByName(toolchain)
+            File objDumpPath = new File(getToolChainPath(abi, toolchain), "bin/" + abi.getGccExecutablePrefix() + "-objdump")
             return objDumpPath
         } catch (Throwable ex) {
             project.logger.error("Error attempting to calculate objdump location: " + ex.message)
@@ -230,13 +231,12 @@ class BugsnagUploadNdkTask extends BugsnagMultiPartUploadTask {
     }
 
     /**
-     * Get the path for the default GCC toolchain
-     * TODO: fix this for different toolchains
+     * Get the path for the toolchain
      */
-    private String getToolChainPath(Abi abi) {
+    private String getToolChainPath(Abi abi, Toolchain toolchain) {
         File ndkDirectory = findNdkDirectory(readProjectProperties(), projectDir)
         DefaultNdkInfo ndkInfo = new DefaultNdkInfo(ndkDirectory);
-        return ndkInfo.getToolchainPath(Toolchain.GCC, ndkInfo.getDefaultToolchainVersion(Toolchain.GCC, abi), abi);
+        return ndkInfo.getToolchainPath(toolchain, ndkInfo.getDefaultToolchainVersion(toolchain, abi), abi);
     }
 
     /**
