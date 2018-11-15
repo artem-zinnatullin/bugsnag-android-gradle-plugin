@@ -7,5 +7,6 @@ build/
 # Ignore Gradle GUI config
 gradle-app.setting
 .idea/
+*.iml
 local.properties
 maze_output/
