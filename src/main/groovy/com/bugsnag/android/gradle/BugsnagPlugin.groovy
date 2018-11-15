@@ -145,14 +145,16 @@ class BugsnagPlugin implements Plugin<Project> {
     private static void setupNdkMappingFileUpload(Project project, BugsnagTaskDeps deps) {
         if (isNdkProject(project)) {
             // Create a Bugsnag task to upload NDK mapping file(s)
-            BugsnagUploadNdkTask uploadNdkTask = project.tasks.create("uploadBugsnagNdk${taskNameForOutput(deps.output)}Mapping", BugsnagUploadNdkTask)
-            prepareUploadTask(uploadNdkTask, deps, project)
+            TaskProvider<BugsnagUploadNdkTask> uploadNdkTaskProvider = project.tasks.register("uploadBugsnagNdk${taskNameForOutput(deps.output)}Mapping", BugsnagUploadNdkTask)
+            prepareUploadTask(uploadNdkTaskProvider, deps, project)
 
-            uploadNdkTask.variantName = taskNameForVariant(deps.variant)
-            uploadNdkTask.projectDir = project.projectDir
-            uploadNdkTask.rootDir = project.rootDir
-            uploadNdkTask.toolchain = getCmakeToolchain(project, deps.variant)
-            uploadNdkTask.sharedObjectPath = project.bugsnag.sharedObjectPath
+            uploadNdkTaskProvider.configure { BugsnagUploadNdkTask uploadNdkTask ->
+                uploadNdkTask.variantName = taskNameForVariant(deps.variant)
+                uploadNdkTask.projectDir = project.projectDir
+                uploadNdkTask.rootDir = project.rootDir
+                uploadNdkTask.toolchain = getCmakeToolchain(project, deps.variant)
+                uploadNdkTask.sharedObjectPath = project.bugsnag.sharedObjectPath
+            }
         }
     }
 
