@@ -5,7 +5,7 @@ buildscript {
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.3.0-beta04'
+        classpath 'com.android.tools.build:gradle:3.1.0'
     }
 }
 
@@ -139,4 +139,3 @@ bintray {
         }
     }
 }
-
