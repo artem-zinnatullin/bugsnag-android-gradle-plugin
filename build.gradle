@@ -5,7 +5,7 @@ buildscript {
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.1.0'
+        classpath 'com.android.tools.build:gradle:3.3.0-beta04'
     }
 }
 
@@ -140,6 +140,3 @@ bintray {
     }
 }
 
-task wrapper(type: Wrapper) {
-    gradleVersion = '4.4'
-}

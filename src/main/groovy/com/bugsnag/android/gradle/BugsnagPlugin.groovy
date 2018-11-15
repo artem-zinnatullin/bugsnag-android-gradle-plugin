@@ -14,6 +14,7 @@ import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
+import org.gradle.api.tasks.TaskProvider
 import org.gradle.util.VersionNumber
 
 /**
@@ -132,9 +133,13 @@ class BugsnagPlugin implements Plugin<Project> {
      * Creates a bugsnag task to upload proguard mapping file
      */
     private static void setupMappingFileUpload(Project project, BugsnagTaskDeps deps) {
-        def uploadTask = project.tasks.create("uploadBugsnag${taskNameForOutput(deps.output)}Mapping", BugsnagUploadProguardTask)
-        uploadTask.partName = isJackEnabled(project, deps.variant) ? "jack" : "proguard"
-        prepareUploadTask(uploadTask, deps, project)
+        TaskProvider<BugsnagUploadProguardTask> uploadTaskProvider = project
+            .tasks
+            .register("uploadBugsnag${taskNameForOutput(deps.output)}Mapping", BugsnagUploadProguardTask)
+
+        uploadTaskProvider.configure { BugsnagUploadProguardTask task -> task.partName = isJackEnabled(project, deps.variant) ? "jack" : "proguard" }
+
+        prepareUploadTask(uploadTaskProvider, deps, project)
     }
 
     private static void setupNdkMappingFileUpload(Project project, BugsnagTaskDeps deps) {
@@ -163,33 +168,45 @@ class BugsnagPlugin implements Plugin<Project> {
     }
 
     private static void setupReleasesTask(Project project, BugsnagTaskDeps deps) {
-        def releasesTask = project.tasks.create("bugsnagRelease${taskNameForOutput(deps.output)}Task", BugsnagReleasesTask)
-        setupBugsnagTask(releasesTask, deps)
+        TaskProvider<BugsnagReleasesTask> releasesTaskProvider = project.tasks.register("bugsnagRelease${taskNameForOutput(deps.output)}Task", BugsnagReleasesTask)
+        setupBugsnagTask(releasesTaskProvider, deps)
 
-        findAssembleTasks(deps.output, project).forEach {
-            releasesTask.mustRunAfter it
+        findAssembleTasks(deps, project).forEach { assembleTaskProvider ->
+            assembleTaskProvider.configure { assembleTask ->
+                releasesTaskProvider.configure { releasesTask ->
+                    releasesTask.mustRunAfter(assembleTask)
 
-            if (project.bugsnag.autoReportBuilds) {
-                it.finalizedBy releasesTask
+                    if (project.bugsnag.autoReportBuilds) {
+                        assembleTask.finalizedBy(releasesTask)
+                    }
+                }
             }
         }
     }
 
-    private static def setupBugsnagTask(BugsnagVariantOutputTask task, BugsnagTaskDeps deps) {
-        task.group = GROUP_NAME
-        task.variantOutput = deps.output
-        task.variant = deps.variant
+    private static def setupBugsnagTask(TaskProvider<BugsnagVariantOutputTask> taskProvider, BugsnagTaskDeps deps) {
+        taskProvider.configure { BugsnagVariantOutputTask task ->
+            task.group = GROUP_NAME
+            task.variantOutput = deps.output
+            task.variant = deps.variant
+        }
     }
 
-    private static void prepareUploadTask(BugsnagMultiPartUploadTask uploadTask, BugsnagTaskDeps deps, Project project) {
-        setupBugsnagTask(uploadTask, deps)
-        uploadTask.applicationId = deps.variant.applicationId
+    private static void prepareUploadTask(TaskProvider<BugsnagMultiPartUploadTask> uploadTaskProvider, BugsnagTaskDeps deps, Project project) {
+        setupBugsnagTask(uploadTaskProvider, deps)
+        uploadTaskProvider.configure { BugsnagMultiPartUploadTask uploadTask ->
+            uploadTask.applicationId = deps.variant.applicationId
+        }
 
-        findAssembleTasks(deps.output, project).forEach {
-            uploadTask.mustRunAfter it
+        findAssembleTasks(deps, project).forEach { assembleTaskProvider ->
+            assembleTaskProvider.configure { Task assembleTask ->
+                uploadTaskProvider.configure { uploadTask ->
+                    uploadTask.mustRunAfter(assembleTask)
 
-            if (project.bugsnag.autoUpload) {
-                it.finalizedBy uploadTask
+                    if (project.bugsnag.autoUpload) {
+                        assembleTask.finalizedBy(uploadTask)
+                    }
+                }
             }
         }
     }
@@ -203,9 +220,13 @@ class BugsnagPlugin implements Plugin<Project> {
      * @param project the current project
      * @return the assemble tasks
      */
-    private static Set<Task> findAssembleTasks(BaseVariantOutput output, Project project) {
-        String variantName = output.name.split("-")[0].capitalize()
-        String assembleTaskName = output.assemble.name
+    private static Set<TaskProvider> findAssembleTasks(BugsnagTaskDeps deps, Project project) {
+        String variantName = deps.output.name.split("-")[0].capitalize()
+
+        String assembleTaskName = deps.variant.metaClass.methods.find { it.name == "getAssembleProvider" } != null ?
+            ((TaskProvider) deps.variant.getAssembleProvider()).getName()
+            : deps.output.assemble.name
+
         String buildTypeTaskName = assembleTaskName.replaceAll(variantName, "")
         String buildType = buildTypeTaskName.replaceAll("assemble", "")
         String variantTaskName = assembleTaskName.replaceAll(buildType, "")
@@ -216,16 +237,33 @@ class BugsnagPlugin implements Plugin<Project> {
         taskNames.add(buildTypeTaskName)
         taskNames.add(variantTaskName)
 
-        project.tasks.findAll {
-            taskNames.contains(it.name)
+        taskNames
+            .collect { taskName ->
+            try {
+                project.tasks.named(taskName)
+            } catch (Exception ignored) {
+                null
+            }
         }
+        .findAll { it != null }
     }
 
     private static void setupManifestUuidTask(Project project, BugsnagTaskDeps deps) {
-        BugsnagManifestTask manifestTask = project.tasks.create("processBugsnag${taskNameForOutput(deps.output)}Manifest", BugsnagManifestTask)
-        setupBugsnagTask(manifestTask, deps)
-        def processManifest = deps.output.processManifest
-        processManifest.finalizedBy(manifestTask)
+        TaskProvider<BugsnagManifestTask> bugsnagProcessManifestTaskProvider = project
+            .tasks
+            .register("processBugsnag${taskNameForOutput(deps.output)}Manifest", BugsnagManifestTask)
+
+        setupBugsnagTask(bugsnagProcessManifestTaskProvider, deps)
+
+        if (deps.output.metaClass.methods.find { it.name == "getProcessManifestProvider" } != null) {
+            deps.output.getProcessManifestProvider().configure { processManifestTask ->
+                bugsnagProcessManifestTaskProvider.configure { bugsnagProcessManifestTask ->
+                    processManifestTask.finalizedBy(bugsnagProcessManifestTask)
+                }
+            }
+        } else {
+            deps.variant.processManifest.finalizedBy(bugsnagProcessManifestTaskProvider.get())
+        }
     }
 
     /**
@@ -244,16 +282,18 @@ class BugsnagPlugin implements Plugin<Project> {
      * as it is now part of the "transforms" process.
      */
     private void setupProguardAutoConfig(Project project, BaseVariant variant) {
-        BugsnagProguardConfigTask proguardConfigTask = project.tasks.create("processBugsnag${taskNameForVariant(variant)}Proguard", BugsnagProguardConfigTask)
-        proguardConfigTask.group = GROUP_NAME
-        proguardConfigTask.variant = variant
+        TaskProvider<BugsnagProguardConfigTask> proguardConfigTaskProvider = project.tasks.register("processBugsnag${taskNameForVariant(variant)}Proguard", BugsnagProguardConfigTask)
+        proguardConfigTaskProvider.configure { BugsnagProguardConfigTask proguardConfigTask ->
+            proguardConfigTask.group = GROUP_NAME
+            proguardConfigTask.variant = variant
+        }
 
         // consumer proguard rules were added to the library in 4.6.0
         boolean hasConsumerRules = bugsnagVersionNumber.major >= 4 && bugsnagVersionNumber.minor >= 6
 
         if (project.bugsnag.autoProguardConfig && !hasConsumerRules) {
             project.logger.debug("Bugsnag autoproguard config enabled")
-            dependTaskOnPackageTask(variant, proguardConfigTask)
+            dependTaskOnPackageTask(variant, proguardConfigTaskProvider)
         } else {
             project.logger.debug("ProGuard has consumer rules, skipping write")
         }
@@ -267,11 +307,23 @@ class BugsnagPlugin implements Plugin<Project> {
         output.name.capitalize()
     }
 
-    private static void dependTaskOnPackageTask(BaseVariant variant, Task task) {
+    private static void dependTaskOnPackageTask(BaseVariant variant, TaskProvider taskProvider) {
         if (variant instanceof LibraryVariant) {
-            variant.getPackageLibrary().dependsOn task
+            if (variant.metaClass.methods.find { it.name == "getPackageLibraryProvider" } != null) {
+                variant.getPackageLibraryProvider().configure {
+                    it.dependsOn(taskProvider.get())
+                }
+            } else {
+                variant.getPackageLibrary().dependsOn(taskProvider.get())
+            }
         } else {
-            variant.getPackageApplication().dependsOn task
+            if (variant.metaClass.methods.find { it.name == "getPackageApplicationProvider" } != null) {
+                variant.getPackageApplicationProvider().configure {
+                    it.dependsOn(taskProvider.get())
+                }
+            } else {
+                variant.getPackageApplication().dependsOn(taskProvider.get())
+            }
         }
     }
 
